@@ -1,0 +1,531 @@
+@echo off
+setlocal enabledelayedexpansion
+color 0B
+
+:: ============================================
+::              The Master Codex
+:: ============================================
+
+:: Admin check
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    echo.
+    echo ****************************************
+    echo  ERROR: Please run this script as Administrator!
+    echo ****************************************
+    pause
+    exit /b
+)
+
+echo Running Group Policy Update...
+gpupdate /force /wait:0 >nul 2>&1
+echo Group Policy update complete.
+
+:: Root log directory
+set "logroot=C:\CodexLogs"
+if not exist "%logroot%" mkdir "%logroot%"
+
+:: Generate timestamp (modern format)
+for /f "tokens=2 delims==." %%I in ('"wmic os get localdatetime /value"') do set ldt=%%I
+set YYYY=%ldt:~0,4%
+set MM=%ldt:~4,2%
+set DD=%ldt:~6,2%
+set HH=%ldt:~8,2%
+set Min=%ldt:~10,2%
+set SS=%ldt:~12,2%
+
+:: Handle AM/PM conversion
+set /a H24=%HH%
+if %H24% GEQ 12 (
+  if %H24% GTR 12 set /a HH12=%H24%-12 & set AMPM=PM
+  if %H24% EQU 12 set HH12=12 & set AMPM=PM
+) else (
+  if %H24% EQU 0 (set HH12=12) else (set HH12=%H24%)
+  set AMPM=AM
+)
+if %HH12% LSS 10 set HH12=0%HH12%
+
+set timestamp=%YYYY%-%MM%-%DD% - %HH12%%AMPM%
+
+:: Create primary subfolders
+for %%F in (Network NetworkReset PCInfo Backup Transfer DiskHealth EventLogs TimeSync Printer Drivers Software) do (
+    if not exist "%logroot%\%%F" mkdir "%logroot%\%%F"
+)
+
+:MENU
+cls
+
+echo ========================================
+echo            The Master Codex
+echo ========================================
+echo 1 - Profile Backup and Transfer
+echo 2 - Network Troubleshooting
+echo 3 - Flush DNS and Reset Network
+echo 4 - Trigger Windows Updates
+echo 5 - Generate PC Info Report
+echo 6 - Map Network Drive
+echo 7 - Unlock AD User
+echo 8 - Disk Cleanup
+echo 9 - Event Log Collector
+echo 10- Time Sync Troubleshooter
+echo 11- Printer Queue Reset
+echo 12- Export Drivers
+echo 13- Installed Software List
+echo 14- ScanPST
+echo 15- Exit
+echo ========================================
+set /p choice=Select an option: 
+
+if "%choice%"=="1" goto BACKUP_MENU
+if "%choice%"=="2" goto NETWORK
+if "%choice%"=="3" goto RESET
+if "%choice%"=="4" goto UPDATES
+if "%choice%"=="5" goto PCINFO
+if "%choice%"=="6" goto MAPDRIVE
+if "%choice%"=="7" goto UNLOCKAD
+if "%choice%"=="8" goto DISK
+if "%choice%"=="9" goto EVENTLOGS
+if "%choice%"=="10" goto TIMESYNC
+if "%choice%"=="11" goto PRINTER
+if "%choice%"=="12" goto DRIVEREXPORT
+if "%choice%"=="13" goto SOFTWARELIST
+if "%choice%"=="14" goto SCANPST
+if "%choice%"=="15" exit
+
+:============================================
+:BACKUP_MENU
+cls
+echo ========================================
+echo      Profile Backup and Transfer
+echo ========================================
+echo 1 - Backup User Profile
+echo 2 - Transfer Backup to New PC
+echo 3 - Return to Main Menu
+echo ========================================
+set /p backupChoice=Select an option:
+
+if "%backupChoice%"=="1" goto BACKUP
+if "%backupChoice%"=="2" goto TRANSFER
+if "%backupChoice%"=="3" goto MENU
+goto BACKUP_MENU
+
+:========================================
+:DISK
+cls
+echo ========================================
+echo       Disk Health and Maintenance
+echo ========================================
+echo 1 - Run CHKDSK
+echo 2 - Run SFC /scannow
+echo 3 - Run DISM /RestoreHealth
+echo 4 - Run DISM StartComponentCleanup
+echo 5 - Clean Temp Files
+echo 6 - Run Full Maintenance
+echo 7 - Return to Main Menu
+echo ========================================
+set /p diskChoice=Select an option:
+
+:: Create log directory for this run
+set "disklogdir=%logroot%\DiskHealth\%timestamp%"
+if not exist "%disklogdir%" mkdir "%disklogdir%"
+
+if "%diskChoice%"=="1" goto DISK_CHKDSK
+if "%diskChoice%"=="2" goto DISK_SFC
+if "%diskChoice%"=="3" goto DISK_DISM
+if "%diskChoice%"=="4" goto DISK_CLEANUP
+if "%diskChoice%"=="5" goto DISK_CLEANTEMP
+if "%diskChoice%"=="6" goto DISK_ALL
+if "%diskChoice%"=="7" goto MENU
+goto DISK
+
+:========================================
+:BACKUP
+cls
+echo -------- User Data Backup --------
+set /p username=Enter username (e.g., First.Last): 
+set /p networkProfile=Enter network path (e.g., \\COMPUTERNAME\C$\Users\First.Last): 
+
+set "dateFolder=%year%-%month%-%day%"
+set "timeFolder=%hour%-%minute%%ampm%"
+set "destination=\\ausap1undta01\Users\%username%\UserDataBackup\%dateFolder%\%timeFolder%"
+
+mkdir "%destination%" >nul 2>&1
+
+:: Logs for backup
+set "backupLogDir=%logroot%\Backup\%timestamp%"
+mkdir "%backupLogDir%"
+
+(
+    echo Backing up user %username% from %networkProfile%
+    echo Destination: %destination%
+) > "%backupLogDir%\backup-log.txt"
+
+:========================================
+:Documents
+for /d %%D in ("%networkProfile%\OneDrive*") do (
+    if exist "%%D\Documents" (
+        set "dynamicOneDrive=%%D"
+        goto FoundOneDrive
+    )
+)
+set "dynamicOneDrive="
+
+:FoundOneDrive
+if defined dynamicOneDrive (
+    echo Copying Documents from OneDrive folder: %dynamicOneDrive%
+    robocopy "%dynamicOneDrive%\Documents" "%destination%\Documents" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS >> "%backupLogDir%\backup-log.txt"
+) else (
+    echo OneDrive folder not found, using standard Documents path...
+    robocopy "%networkProfile%\Documents" "%destination%\Documents" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS >> "%backupLogDir%\backup-log.txt"
+)
+
+
+for %%F in (Downloads Favorites Links) do (
+    if exist "%networkProfile%\%%F" (
+        echo Copying %%F...
+        robocopy "%networkProfile%\%%F" "%destination%\%%F" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS >> "%backupLogDir%\backup-log.txt"
+    ) else (
+        echo Skipping %%F — not found.
+    )
+)
+
+:========================================
+:AppData folders
+if exist "%networkProfile%\AppData\Local\Microsoft\Edge" (
+    robocopy "%networkProfile%\AppData\Local\Microsoft\Edge" "%destination%\Edge" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS >> "%backupLogDir%\backup-log.txt"
+)
+
+if exist "%networkProfile%\AppData\Roaming\Microsoft\Signatures" (
+    robocopy "%networkProfile%\AppData\Roaming\Microsoft\Signatures" "%destination%\Signatures" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS >> "%backupLogDir%\backup-log.txt"
+)
+
+if exist "%networkProfile%\AppData\Local\Google\Chrome" (
+    robocopy "%networkProfile%\AppData\Local\Google\Chrome" "%destination%\Chrome" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS >> "%backupLogDir%\backup-log.txt"
+)
+
+if defined dynamicOneDrive (
+    if exist "%dynamicOneDrive%\Desktop" (
+        echo Copying OneDrive Desktop...
+        robocopy "%dynamicOneDrive%\Desktop" "%destination%\Desktop" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS >> "%backupLogDir%\backup-log.txt"
+    )
+)
+
+echo Backup complete: %destination%
+pause
+goto BACKUP_MENU
+
+:========================================
+:TRANSFER
+cls
+echo ========================================
+echo              Data Transfer
+echo ========================================
+set /p sourcePath=Enter full backup path (e.g. \\ausap1undta01\Users\First.Last\UserDataBackup\05-Thu-06\09-08AM): 
+set /p remoteComputer=Enter destination PC (hostname or IP): 
+set /p remoteUsername=Enter username on destination PC: 
+
+set "remoteBase=\\%remoteComputer%\C$\Users\%remoteUsername%"
+set "remoteBackup=%remoteBase%\RestoredBackup"
+mkdir "%remoteBackup%" >nul 2>&1
+
+set "transferLogDir=%logroot%\Transfer\%timestamp%"
+mkdir "%transferLogDir%"
+
+robocopy "%sourcePath%" "%remoteBackup%" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS > "%transferLogDir%\transfer-log.txt"
+
+if exist "%sourcePath%\Chrome" (
+    robocopy "%sourcePath%\Chrome" "%remoteBase%\AppData\Local\Google\Chrome" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS >> "%transferLogDir%\transfer-log.txt"
+)
+if exist "%sourcePath%\Edge" (
+    robocopy "%sourcePath%\Edge" "%remoteBase%\AppData\Local\Microsoft\Edge" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS >> "%transferLogDir%\transfer-log.txt"
+)
+if exist "%sourcePath%\Signatures" (
+    robocopy "%sourcePath%\Signatures" "%remoteBase%\AppData\Roaming\Microsoft\Signatures" /E /Z /COPY:DAT /R:2 /W:5 /NFL /NDL /NJH /NJS >> "%transferLogDir%\transfer-log.txt"
+)
+
+echo Transfer complete.
+pause
+goto BACKUP_MENU
+
+:========================================
+:NETWORK
+cls
+echo ========================================
+echo       Network Troubleshooting
+echo ========================================
+set /p target=Enter hostname or IP to test (e.g. google.com):
+
+:: Create log directory for this run
+set "netlogdir=%logroot%\Network\%timestamp%"
+if not exist "%netlogdir%" mkdir "%netlogdir%"
+
+:: Collect IP config
+ipconfig /all > "%netlogdir%\ipconfig.txt"
+type "%netlogdir%\ipconfig.txt"
+
+:: Ping test
+echo.
+echo Pinging %target%...
+ping %target% > "%netlogdir%\ping.txt"
+type "%netlogdir%\ping.txt"
+
+:: NSLookup test
+echo.
+echo Running NSLookup for %target%...
+nslookup %target% > "%netlogdir%\nslookup.txt"
+type "%netlogdir%\nslookup.txt"
+
+echo.
+echo Network troubleshooting completed. Logs saved to: %netlogdir%
+pause
+goto MENU
+
+
+:========================================
+:RESET
+cls
+echo ========================================
+echo       DNS Flush and Network Reset
+echo ========================================
+set "netresetdir=%logroot%\NetworkReset\%timestamp%"
+mkdir "%netresetdir%"
+
+ipconfig /flushdns > "%netresetdir%\flushdns.txt" 2>&1
+netsh winsock reset > "%netresetdir%\winsockreset.txt" 2>&1
+netsh int ip reset > "%netresetdir%\ipreset.txt" 2>&1
+
+echo Network stack reset completed.
+pause
+goto MENU
+
+:========================================
+:UPDATES
+cls
+echo ========================================
+echo             Windows Updates
+echo ========================================
+wuauclt /detectnow
+wuauclt /updatenow
+pause
+goto MENU
+
+:========================================
+:PCINFO
+cls
+echo ========================================
+echo         Computer Information
+echo ========================================
+set "pcinfolog=%logroot%\PCInfo\%timestamp%"
+mkdir "%pcinfolog%"
+
+systeminfo > "%pcinfolog%\sysinfo.txt"
+wmic bios get serialnumber >> "%pcinfolog%\sysinfo.txt"
+wmic csproduct get name >> "%pcinfolog%\sysinfo.txt"
+echo Info saved to %pcinfolog%
+
+systeminfo
+wmic bios get serialnumber
+wmic csproduct get name
+pause
+goto MENU
+
+:========================================
+:MAPDRIVE
+cls
+echo ========================================
+echo              Drive Mapping
+echo ========================================
+net use * /delete /y >nul 2>&1
+set /p drive=Enter drive letter (ex: Z:):
+set /p path=Enter UNC path (ex: \\server\share):
+net use %drive% %path% /persistent:yes
+echo Drive mapped successfully.
+pause
+goto MENU
+
+:========================================
+:UNLOCKAD
+cls
+echo ========================================
+echo            AD User Unlock
+echo ========================================
+set /p username=Enter AD username:
+net user %username% /domain /active:yes
+net user %username% /domain | find "Account active"
+pause
+goto MENU
+
+:========================================
+:DISK_CHKDSK
+cls
+echo Running CHKDSK...
+chkdsk C: > "%disklogdir%\chkdsk.txt"
+
+find "Windows has scanned the file system and found no problems" "%disklogdir%\chkdsk.txt" >nul
+if %errorlevel%==0 (
+    echo CHKDSK: No issues found.
+) else (
+    echo CHKDSK: Issues found or repaired.
+)
+pause
+exit /b
+
+:========================================
+:DISK_SFC
+cls
+echo Running System File Checker (SFC)...
+sfc /scannow > "%disklogdir%\sfc.txt"
+
+find "Windows Resource Protection did not find any integrity violations" "%disklogdir%\sfc.txt" >nul
+if %errorlevel%==0 (
+    echo SFC: No integrity violations.
+) else (
+    echo SFC: Corrupt files found or repaired.
+)
+pause
+exit /b
+
+:========================================
+:DISK_DISM
+cls
+echo Running DISM RestoreHealth...
+Dism.exe /Online /Cleanup-Image /RestoreHealth > "%disklogdir%\dism-restorehealth.txt"
+
+find "The restore operation completed successfully" "%disklogdir%\dism-restorehealth.txt" >nul
+if %errorlevel%==0 (
+    echo DISM RestoreHealth: Completed successfully.
+) else (
+    echo DISM RestoreHealth: Issues detected or failed.
+)
+pause
+exit /b
+
+:========================================
+:DISK_CLEANUP
+cls
+echo Cleaning up Component Store...
+Dism.exe /Online /Cleanup-Image /StartComponentCleanup > "%disklogdir%\dism-cleanup.txt"
+echo Component cleanup complete.
+pause
+exit /b
+
+:========================================
+:DISK_CLEANTEMP
+cls
+echo Cleaning Temp Files...
+del /s /q C:\Windows\Temp\*.* >nul 2>&1
+del /s /q %temp%\*.* >nul 2>&1
+echo Temp files cleaned.
+pause
+exit /b
+
+:========================================
+:DISK_ALL
+cls
+echo Running Full Maintenance Check...
+
+call :DISK_CHKDSK
+call :DISK_SFC
+call :DISK_DISM
+call :DISK_CLEANUP
+call :DISK_CLEANTEMP
+
+echo.
+echo ========================================
+echo       Full Maintenance Completed.
+echo       Logs saved to: %disklogdir%
+echo ========================================
+pause
+goto DISK
+
+:========================================
+:EVENTLOGS
+cls
+echo Exporting Application and System logs...
+set "eventlogdir=%logroot%\EventLogs\%timestamp%"
+mkdir "%eventlogdir%"
+wevtutil epl Application "%eventlogdir%\Application.evtx"
+wevtutil epl System "%eventlogdir%\System.evtx"
+echo Application and System logs saved to: %eventlogdir%
+pause
+goto MENU
+
+:========================================
+:TIMESYNC
+cls
+echo Resyncing Windows Time...
+set "timelogdir=%logroot%\TimeSync\%timestamp%"
+mkdir "%timelogdir%"
+w32tm /resync > "%timelogdir%\timesync.txt" 2>&1
+w32tm /query /status >> "%timelogdir%\timesync.txt" 2>&1
+type "%timelogdir%\timesync.txt"
+echo Time sync results saved to %timelogdir%
+pause
+goto MENU
+
+:========================================
+:PRINTER
+cls
+echo Clearing printer spooler...
+set "printerlogdir=%logroot%\Printer\%timestamp%"
+mkdir "%printerlogdir%"
+net stop spooler > "%printerlogdir%\spooler.txt" 2>&1
+del /q /f /s %systemroot%\System32\spool\PRINTERS\*.* >> "%printerlogdir%\spooler.txt" 2>&1
+net start spooler >> "%printerlogdir%\spooler.txt" 2>&1
+type "%printerlogdir%\spooler.txt"
+echo Printer spooler cleared. Log saved to %printerlogdir%
+pause
+goto MENU
+
+:========================================
+:DRIVEREXPORT
+cls
+echo Exporting drivers...
+set "driverlogdir=%logroot%\Drivers\%timestamp%"
+mkdir "%driverlogdir%"
+pnputil /export-driver * "%driverlogdir%" > "%driverlogdir%\drivers.txt" 2>&1
+type "%driverlogdir%\drivers.txt"
+echo Drivers exported to %driverlogdir%
+pause
+goto MENU
+
+:========================================
+:SOFTWARELIST
+cls
+echo Exporting installed software list...
+set "softlogdir=%logroot%\Software\%timestamp%"
+mkdir "%softlogdir%"
+wmic product get name,version > "%softlogdir%\softwarelist.txt" 2>&1
+type "%softlogdir%\softwarelist.txt"
+echo Software list saved to %softlogdir%
+pause
+goto MENU
+
+:========================================
+:SCANPST
+cls
+echo ========================================
+echo       Launching Outlook PST Repair
+echo ========================================
+
+set "scanpst="
+:: Search common paths
+if exist "C:\Program Files (x86)\Microsoft Office\root\Office16\SCANPST.EXE" set "scanpst=C:\Program Files (x86)\Microsoft Office\root\Office16\SCANPST.EXE"
+if exist "C:\Program Files\Microsoft Office\root\Office16\SCANPST.EXE" set "scanpst=C:\Program Files\Microsoft Office\root\Office16\SCANPST.EXE"
+if exist "C:\Program Files (x86)\Microsoft Office\Office15\SCANPST.EXE" set "scanpst=C:\Program Files (x86)\Microsoft Office\Office15\SCANPST.EXE"
+if exist "C:\Program Files\Microsoft Office\Office15\SCANPST.EXE" set "scanpst=C:\Program Files\Microsoft Office\Office15\SCANPST.EXE"
+
+if not defined scanpst (
+    echo.
+    echo SCANPST.EXE not found!
+    echo Please locate the file manually.
+    pause
+    goto MENU
+)
+
+echo Found SCANPST at:
+echo %scanpst%
+echo Launching Inbox Repair Tool...
+start "" "%scanpst%"
+pause
+goto MENU
